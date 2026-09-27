@@ -17,8 +17,6 @@ name: Build bundle
 #     UPLOAD_CURL_OPTS  extra curl options for https targets, e.g. --user u:p
 
 on:
-  push:   # TEMP: test run from the feature branch, remove before merge
-    branches: [claude/immich-multi-instance-setup-lej9xg]
   schedule:
     - cron: '17 3 * * *'   # daily; does nothing unless there is a new release
   workflow_dispatch:
