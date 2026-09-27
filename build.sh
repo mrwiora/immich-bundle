@@ -162,7 +162,13 @@ trap cleanup EXIT
 
 dc config -q || die "generated compose file is invalid"
 log "pulling images"
-dc pull
+# registries (ghcr.io) answer bursts with "toomanyrequests" - retry with backoff
+for attempt in 1 2 3 4 5; do
+  dc pull && break
+  (( attempt < 5 )) || die "pulling images failed"
+  warn "pull failed (attempt $attempt/5), retrying in $((attempt * 30))s"
+  sleep $((attempt * 30))
+done
 log "starting build instance '$BUILD_NAME' on $BUILD_PORT"
 dc up -d
 

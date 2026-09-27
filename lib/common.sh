@@ -17,7 +17,7 @@ need_compose() {
 }
 
 random_alnum() { # immich only accepts A-Za-z0-9 for DB_PASSWORD
-  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-32}" || true
+  LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c "${1:-32}" || true
 }
 
 # Set KEY=VALUE in an env file (replace if present, append otherwise).
