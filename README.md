@@ -151,3 +151,74 @@ UPLOAD_TARGET=/mnt/share/immich-bundle           # local / mounted directory
 ```
 
 Then use `./build.sh --upload`, or `./upload.sh dist/immich-bundle-v3.0.1.tar*`.
+
+## Automated builds (GitHub Actions)
+
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs every night.
+It builds a bundle only when a new immich release exists.
+
+- **Record of built versions:** each built version gets a release in this
+  repository with the same tag (e.g. `v3.0.1`). A version that already has a
+  release is skipped.
+- **Release files:** the release holds `manifest.json`, the patched
+  `docker-compose.yml`, `example.env`, the checksums and the bundle itself.
+  Release assets are limited to 2 GiB each, so the bundle is split into
+  `.part-NN` files. Put it back together with:
+  `cat immich-bundle-vX.Y.Z.tar.part-* > immich-bundle-vX.Y.Z.tar`.
+- **Upload:** if `UPLOAD_TARGET` is set, the bundle is also sent to your server.
+- **Manual runs:** *Actions → Build bundle → Run workflow* builds any version.
+  Tick `force` to rebuild a version that already has a release.
+
+[`.github/workflows/check.yml`](.github/workflows/check.yml) runs on every
+push and pull request. It runs shellcheck and checks that `patches/` still
+applies to the latest immich compose file (`ci/check-patch.sh`). This check
+needs no Docker daemon.
+
+Settings (*Settings → Secrets and variables → Actions*):
+
+| name | kind | purpose |
+|---|---|---|
+| `BUILD_RUNNER` | variable | runner label, default `ubuntu-latest`; `immich-bundle` for the self-hosted runner below |
+| `RELEASE_BUNDLE` | variable | `false`: don't attach the bundle parts to the release |
+| `UPLOAD_TARGET` | secret | `user@host:/path/`, `https://…/` or a mounted path (see [Upload](#upload)) |
+| `UPLOAD_SSH_KEY` | secret | private key for rsync/scp targets |
+| `UPLOAD_KNOWN_HOSTS` | secret | `ssh-keyscan <host>` output for rsync/scp targets |
+| `UPLOAD_CURL_OPTS` | secret | extra curl options for https targets |
+
+### GitHub-hosted or self-hosted runner
+
+GitHub's `ubuntu-latest` runners come with Docker and Docker Compose, so the
+workflow should run there without a server of your own. The workflow first
+frees about 30 GB of preinstalled software, because a build needs roughly
+30–40 GB of disk. The bundle is built for the runner's architecture, which is
+x86_64.
+
+Use a self-hosted runner if the hosted one runs out of disk or time, or if you
+want to upload into your internal network. **Use Debian, not Arch Linux.**
+
+- **Docker:** Docker publishes official `docker-ce` packages for Debian. Arch
+  only has community packages that follow its rolling updates.
+- **Actions runner:** the runner's `installdependencies.sh` supports
+  Debian/Ubuntu (and RHEL, SUSE). Arch isn't supported.
+- **Maintenance:** Debian stable changes little between releases, which suits
+  an unattended build machine. A rolling distribution can break Docker or the
+  runner with any update.
+
+Set up a fresh Debian 12 or 13 machine as root with a registration token from
+*Settings → Actions → Runners → New self-hosted runner*:
+
+```sh
+git clone https://github.com/OWNER/REPO && cd REPO
+./ci/setup-runner-debian.sh --url https://github.com/OWNER/REPO --token <TOKEN>
+```
+
+Then set the variable `BUILD_RUNNER=immich-bundle`. The script does four
+things:
+
+- installs Docker from `download.docker.com`
+- installs the build tools, including `gh`
+- creates a `ghrunner` user in the `docker` group
+- registers the runner as a systemd service with the label `immich-bundle`
+
+Use a dedicated machine or VM. The workflow deletes the images it pulled after
+each build, but it leaves images that containers are using.

@@ -1,0 +1,22 @@
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -x build.sh deploy.sh upload.sh lib/common.sh ci/*.sh
+      - name: patches apply to the latest immich release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ci/check-patch.sh

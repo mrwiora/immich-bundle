@@ -2,7 +2,8 @@
 # Upload bundle files to the central server.
 #
 # Target comes from UPLOAD_TARGET (environment or config.env):
-#   user@host:/path/        -> rsync (falls back to scp)
+#   user@host:/path/        -> rsync (falls back to scp); ssh options via
+#                              RSYNC_RSH / SCP_OPTS, e.g. "ssh -i key"
 #   https://host/path/      -> HTTP PUT per file via curl (e.g. WebDAV, S3 presigned
 #                              prefix, nginx dav); extra curl options in UPLOAD_CURL_OPTS
 #   /local/or/mounted/path  -> cp
@@ -36,7 +37,8 @@ case $UPLOAD_TARGET in
     else
       need scp
       log "scp -> $UPLOAD_TARGET"
-      scp "$@" "$UPLOAD_TARGET"
+      # shellcheck disable=SC2086 # SCP_OPTS: intentional word splitting
+      scp ${SCP_OPTS:-} "$@" "$UPLOAD_TARGET"
     fi
     ;;
   *)
