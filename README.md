@@ -1,4 +1,4 @@
-# immichOFF
+# immich-bundle
 
 Offline bundles for [immich](https://immich.app), plus multi-instance deployment.
 
@@ -8,7 +8,7 @@ Offline bundles for [immich](https://immich.app), plus multi-instance deployment
    release's `docker-compose.yml` and `example.env`, plus `hwaccel.*.yml` if
    the release has them.
 2. Starts a throw-away instance. It gets its own project name
-   (`immichoff-build`) and listens on `127.0.0.1:12283`, so it doesn't collide
+   (`immich-bundle-build`) and listens on `127.0.0.1:12283`, so it doesn't collide
    with the instances already running on the server.
 3. Uses the API to create the first admin user and upload a sample picture.
    It then runs one smart search, because the text half of the CLIP model only
@@ -39,9 +39,9 @@ Requirements: `docker` with the compose plugin, `curl`, `jq`, `tar`, `gzip`,
 Output:
 
 ```
-dist/immich-offline-v3.0.1.tar          # the bundle
-dist/immich-offline-v3.0.1.tar.sha256
-dist/immich-offline-latest.tar          # symlink to the newest bundle
+dist/immich-bundle-v3.0.1.tar           # the bundle
+dist/immich-bundle-v3.0.1.tar.sha256
+dist/immich-bundle-latest.tar           # symlink to the newest bundle
 work/v3.0.1/cache/                      # extracted model cache (plain folder)
 ```
 
@@ -50,7 +50,7 @@ nothing unless you pass `--force`. You can therefore run it from cron to always
 follow the latest release:
 
 ```cron
-0 4 * * *  cd /opt/immichOFF && ./build.sh --upload >> build.log 2>&1
+0 4 * * *  cd /opt/immich-bundle && ./build.sh --upload >> build.log 2>&1
 ```
 
 ### Bundle content
@@ -71,8 +71,8 @@ follow the latest release:
 ## Deploy (offline host)
 
 ```sh
-tar -xf immich-offline-v3.0.1.tar
-cd immich-offline-v3.0.1
+tar -xf immich-bundle-v3.0.1.tar
+cd immich-bundle-v3.0.1
 ./deploy.sh --name up   --dir /srv/immich/up   --port 2284 --start
 ./deploy.sh --name down --dir /srv/immich/down --port 2285 --start --skip-load
 ```
@@ -144,10 +144,10 @@ build and are recorded in `images.txt` and `manifest.json`.
 Copy `config.env.example` to `config.env` and set `UPLOAD_TARGET`:
 
 ```sh
-UPLOAD_TARGET=user@host:/srv/immich-offline/      # rsync (or scp)
+UPLOAD_TARGET=user@host:/srv/immich-bundle/      # rsync (or scp)
 UPLOAD_TARGET=https://files.example.org/immich/   # HTTP PUT via curl
 UPLOAD_CURL_OPTS="--user uploader:secret"
-UPLOAD_TARGET=/mnt/share/immich-offline           # local / mounted directory
+UPLOAD_TARGET=/mnt/share/immich-bundle           # local / mounted directory
 ```
 
-Then use `./build.sh --upload`, or `./upload.sh dist/immich-offline-v3.0.1.tar*`.
+Then use `./build.sh --upload`, or `./upload.sh dist/immich-bundle-v3.0.1.tar*`.

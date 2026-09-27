@@ -23,7 +23,7 @@ source "$ROOT/lib/common.sh"
 # shellcheck disable=SC1091
 [[ -f $ROOT/config.env ]] && source "$ROOT/config.env"
 VERSION=${VERSION:-latest}
-BUILD_NAME=${BUILD_NAME:-immichoff-build}
+BUILD_NAME=${BUILD_NAME:-immich-bundle-build}
 BUILD_PORT=${BUILD_PORT:-127.0.0.1:12283}
 SAMPLE=${SAMPLE:-$ROOT/assets/sample.jpg}
 WORK_DIR=${WORK_DIR:-$ROOT/work}
@@ -92,7 +92,7 @@ else
 fi
 log "immich release: $TAG"
 
-BUNDLE_NAME=immich-offline-$TAG
+BUNDLE_NAME=immich-bundle-$TAG
 BUNDLE_TAR=$DIST_DIR/$BUNDLE_NAME.tar
 if [[ -f $BUNDLE_TAR && $FORCE != 1 ]]; then
   log "$BUNDLE_TAR already exists - nothing to do (use --force to rebuild)"
@@ -164,7 +164,7 @@ until curl -fsS "$API/server/ping" 2>/dev/null | grep -q pong; do
 done
 
 # ------------------------------------------------------ admin + upload ------
-EMAIL=admin@immichoff.local
+EMAIL=admin@immich-bundle.local
 PASS=$(random_alnum 24)
 log "creating admin user $EMAIL"
 curl -fsS -H 'Content-Type: application/json' \
@@ -182,7 +182,7 @@ form=(-F "assetData=@$SAMPLE" -F "fileCreatedAt=$now" -F "fileModifiedAt=$now")
 code=$(curl -sS -o "$INST/upload.json" -w '%{http_code}' "${AUTH[@]}" "${form[@]}" "$API/assets")
 if [[ $code == 400 ]]; then # older releases require device ids
   code=$(curl -sS -o "$INST/upload.json" -w '%{http_code}' "${AUTH[@]}" "${form[@]}" \
-    -F "deviceAssetId=immichoff-sample-$(date +%s)" -F "deviceId=immichoff" "$API/assets")
+    -F "deviceAssetId=immich-bundle-sample-$(date +%s)" -F "deviceId=immich-bundle" "$API/assets")
 fi
 [[ $code == 20? ]] || die "upload failed (HTTP $code): $(cat "$INST/upload.json")"
 
@@ -278,7 +278,7 @@ tar -cf "$BUNDLE_TAR.partial" -C "$WORK_DIR/$TAG" "$BUNDLE_NAME"
 mv "$BUNDLE_TAR.partial" "$BUNDLE_TAR"
 rm -rf "$BUNDLE"   # everything is in the tar now; work/$TAG/cache stays for reference
 ( cd "$DIST_DIR" && sha256sum "$BUNDLE_NAME.tar" >"$BUNDLE_NAME.tar.sha256" )
-ln -sfn "$BUNDLE_NAME.tar" "$DIST_DIR/immich-offline-latest.tar"
+ln -sfn "$BUNDLE_NAME.tar" "$DIST_DIR/immich-bundle-latest.tar"
 
 log "done: $BUNDLE_TAR ($(du -h "$BUNDLE_TAR" | cut -f1))"
 

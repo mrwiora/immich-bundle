@@ -3,7 +3,7 @@
 # Runs without internet access. Shipped inside every bundle; run it from the
 # extracted bundle directory:
 #
-#   tar -xf immich-offline-vX.Y.Z.tar && cd immich-offline-vX.Y.Z
+#   tar -xf immich-bundle-vX.Y.Z.tar && cd immich-bundle-vX.Y.Z
 #   ./deploy.sh --name up --dir /srv/immich/up --port 2284 --start
 set -Eeuo pipefail
 
