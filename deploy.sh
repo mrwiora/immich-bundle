@@ -68,8 +68,8 @@ UPGRADE=0
 if [[ -f $DIR/docker-compose.yml ]]; then
   cp "$DIR/docker-compose.yml" "$DIR/docker-compose.yml.bak"
 fi
-# the bundle template carries 'name: immich' -> rename to this instance
-patch_compose "$HERE/docker-compose.yml" "$DIR/docker-compose.yml" "$NAME" bind 1
+# already patched at build time (patches/); the instance name comes from .env
+cp "$HERE/docker-compose.yml" "$DIR/docker-compose.yml"
 for f in hwaccel.ml.yml hwaccel.transcoding.yml; do
   [[ -f $HERE/$f ]] && cp "$HERE/$f" "$DIR/$f"
 done
@@ -78,12 +78,14 @@ if [[ $UPGRADE == 1 ]]; then
   log "upgrading existing instance in $DIR to $TAG"
   cp "$DIR/.env" "$DIR/.env.bak"
   set_env "$DIR/.env" IMMICH_VERSION "$TAG"
+  set_env "$DIR/.env" INSTANCE_NAME "$NAME"
   [[ -n $(get_env "$DIR/.env" MODEL_LOCATION) ]] || set_env "$DIR/.env" MODEL_LOCATION ./model-cache
   [[ -n $(get_env "$DIR/.env" IMMICH_PORT) ]]    || set_env "$DIR/.env" IMMICH_PORT "${PORT:-2283}"
   [[ -z $PORT ]] || set_env "$DIR/.env" IMMICH_PORT "$PORT"
 else
   log "creating instance '$NAME' in $DIR"
   cp "$HERE/example.env" "$DIR/.env"
+  set_env "$DIR/.env" INSTANCE_NAME "$NAME"
   set_env "$DIR/.env" DB_PASSWORD "$(random_alnum 32)"
   set_env "$DIR/.env" IMMICH_PORT "${PORT:-2283}"
   chmod 600 "$DIR/.env"

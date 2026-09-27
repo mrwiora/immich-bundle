@@ -37,56 +37,35 @@ get_env() { # print value of KEY from an env file
   sed -n "s/^$2=//p" "$1" | tail -n1
 }
 
-# patch_compose IN OUT PROJECT_NAME MODE STRIP_DIGESTS
+# apply_patches UPSTREAM_COMPOSE UPSTREAM_ENV PATCH_DIR OUT_DIR
 #
-# Applies the multi-instance changes to an upstream immich docker-compose.yml:
-#   * top-level `name:` is replaced by PROJECT_NAME
-#   * all `container_name:` lines are removed (compose then derives unique
-#     names from the project name, e.g. up-immich-server-1)
-#   * the published port becomes '${IMMICH_PORT:-2283}:2283'
-#   * MODE=bind:   model-cache volume -> ${MODEL_LOCATION}:/cache and the
-#                  top-level named volume declaration is removed
-#     MODE=volume: model-cache stays a named docker volume
-#   * STRIP_DIGESTS=1 removes "@sha256:..." from image references so images
-#     restored with `docker load` are found by tag (docker load does not
-#     restore repo digests with the classic image store).
-patch_compose() {
-  local in=$1 out=$2 name=$3 mode=$4 strip=${5:-0}
-  awk -v name="$name" -v mode="$mode" -v strip="$strip" -v q="'" '
-    # --- top-level volumes: section (only rewritten in bind mode) ---
-    in_vol && /^[^[:space:]#]/ { in_vol = 0 }
-    in_vol {
-      if ($0 ~ /^[[:space:]]*$/) next
-      if ($0 ~ /^[[:space:]]+model-cache:[[:space:]]*$/) next
-      if (vol_hdr_pending) { print "volumes:"; vol_hdr_pending = 0 }
-      print; next
-    }
-    mode == "bind" && /^volumes:[[:space:]]*$/ { in_vol = 1; vol_hdr_pending = 1; next }
+# Creates OUT_DIR/docker-compose.yml and OUT_DIR/example.env from the upstream
+# files plus the separately maintained changes in PATCH_DIR:
+#   docker-compose.patch  unified diff against the upstream docker-compose.yml
+#   env.additions         lines appended to the upstream example.env
+apply_patches() {
+  local compose=$1 env=$2 pdir=$3 out=$4
+  cp "$compose" "$out/docker-compose.yml"
+  patch -d "$out" -p1 --forward --no-backup-if-mismatch --reject-file=- \
+    <"$pdir/docker-compose.patch" >&2 ||
+    die "$pdir/docker-compose.patch does not apply to this release's docker-compose.yml - please update it"
+  cp "$env" "$out/example.env"
+  cat "$pdir/env.additions" >>"$out/example.env"
 
-    /^name:/                         { print "name: " name; next }
-    /^[[:space:]]+container_name:/   { next }
-    $0 ~ "^[[:space:]]+- [\"" q "]?2283:2283[\"" q "]?[[:space:]]*$" {
-      sub("[\"" q "]?2283:2283[\"" q "]?", q "${IMMICH_PORT:-2283}:2283" q); print; next
-    }
-    mode == "bind" && /^[[:space:]]+- model-cache:\/cache/ {
-      sub(/model-cache:/, "${MODEL_LOCATION}:"); print; next
-    }
-    strip == 1 && /^[[:space:]]+image:/ { sub(/@sha256:[0-9a-f]+/, ""); print; next }
-    { print }
-  ' "$in" >"$out"
+  # sanity checks: fail loudly instead of producing a half-patched file
+  ! grep -q 'container_name:' "$out/docker-compose.yml" || die "patch: container_name still present"
+  # shellcheck disable=SC2016
+  grep -q '\${MODEL_LOCATION}:/cache' "$out/docker-compose.yml" || die "patch: model cache mount missing"
+  # shellcheck disable=SC2016
+  grep -q '^name: \${INSTANCE_NAME' "$out/docker-compose.yml" || die "patch: instance name missing"
+}
 
-  # Fail loudly if upstream changed the file layout and a patch did not apply.
-  grep -qx "name: $name" "$out"                 || die "patch: project name not set in $out"
-  ! grep -q 'container_name:' "$out"            || die "patch: container_name still present in $out"
-  grep -q 'IMMICH_PORT:-2283}:2283' "$out"      || die "patch: port mapping not found in $out"
-  if [[ $mode == bind ]]; then
-    # shellcheck disable=SC2016
-    grep -q '\${MODEL_LOCATION}:/cache' "$out"  || die "patch: model-cache mount not found in $out"
-    ! grep -q 'model-cache' "$out"              || die "patch: model-cache still referenced in $out"
-  else
-    grep -q 'model-cache:/cache' "$out"         || die "patch: model-cache volume not found in $out"
-  fi
-  if [[ $strip == 1 ]]; then
-    ! grep -qE '^[[:space:]]+image:.*@sha256:' "$out" || die "patch: image digests still present in $out"
-  fi
+# strip_digests FILE
+#
+# Offline adjustment (not part of the patch, digests change every release):
+# remove "@sha256:..." from image references so images restored with
+# `docker load` are found by tag - docker load does not restore repo digests
+# with the classic image store, and compose would try to pull them.
+strip_digests() {
+  sed -i -E 's/^([[:space:]]+image:[^@]*)@sha256:[0-9a-f]+/\1/' "$1"
 }

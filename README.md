@@ -16,8 +16,9 @@ Offline bundles for [immich](https://immich.app), plus multi-instance deployment
 4. Polls the job queues until they are idle, meaning thumbnails, CLIP, face
    detection and recognition, and OCR have all finished and the ML models are
    downloaded.
-5. Exports the model cache directly from the docker volume
-   (`docker cp <ml-container>:/cache`). No bind mount is needed while building.
+5. Exports the model cache from the ML container with
+   `docker cp <ml-container>:/cache`. The build instance runs the same patched
+   compose file as your instances, so the cache is in `MODEL_LOCATION`.
 6. Exports every image the compose file uses into one `docker save` archive.
 7. Writes the bundle, deletes the build instance, and optionally uploads the
    result.
@@ -25,7 +26,7 @@ Offline bundles for [immich](https://immich.app), plus multi-instance deployment
 ## Build
 
 Requirements: `docker` with the compose plugin, `curl`, `jq`, `tar`, `gzip`,
-`sha256sum`.
+`sha256sum`, `patch`.
 
 ```sh
 ./build.sh                          # latest release
@@ -58,8 +59,9 @@ follow the latest release:
 |---|---|
 | `images.tar.gz` | `docker save` of all images (server, ML, valkey, postgres) |
 | `models.tar.gz` | ML model cache (clip, facial-recognition, ocr, …) |
-| `docker-compose.yml` | multi-instance template (see below) |
-| `example.env` | upstream env with `IMMICH_VERSION` pinned, plus `MODEL_LOCATION` and `IMMICH_PORT` |
+| `docker-compose.yml` | upstream file with `patches/docker-compose.patch` applied (see below) |
+| `example.env` | upstream env with `IMMICH_VERSION` pinned, plus `patches/env.additions` |
+| `patches/` | the patches used for this bundle |
 | `docker-compose.upstream.yml`, `example.upstream.env` | unmodified upstream files |
 | `hwaccel.*.yml` | upstream hardware acceleration files (if present) |
 | `deploy.sh`, `lib/` | installer for the offline host |
@@ -79,8 +81,8 @@ cd immich-offline-v3.0.1
 
 - verifies the checksums
 - runs `docker load` on the images
-- writes `docker-compose.yml` with `name: <NAME>`
-- creates `.env` with a random `DB_PASSWORD`
+- copies the patched `docker-compose.yml`
+- creates `.env` with `INSTANCE_NAME=<NAME>`, your port and a random `DB_PASSWORD`
 - extracts the models to `MODEL_LOCATION` (default `<dir>/model-cache`)
 
 Nothing is pulled from the internet: start the instance with
@@ -94,32 +96,48 @@ upgrading.
 
 ### Changes to the upstream compose file
 
-These are the changes from your manual diff, plus two additions:
+All changes live in `patches/`, separate from the scripts:
+
+| file | applied as |
+|---|---|
+| [`patches/docker-compose.patch`](patches/docker-compose.patch) | unified diff, `patch -p1` against the release's `docker-compose.yml` |
+| [`patches/env.additions`](patches/env.additions) | appended to the release's `example.env` |
+
+The patch is your manual diff. The instance name and port are now variables,
+so the same compose file works for every instance:
 
 ```diff
 -name: immich
-+name: up
++name: ${INSTANCE_NAME:-immich}
 -    container_name: immich_server        # (all four container_name lines)
 -      - '2283:2283'
-+      - '${IMMICH_PORT:-2283}:2283'      # port per instance via .env
++      - '${IMMICH_PORT:-2283}:2283'
 -      - model-cache:/cache
 +      - ${MODEL_LOCATION}:/cache
--    image: docker.io/valkey/valkey:9@sha256:…
-+    image: docker.io/valkey/valkey:9     # digest removed, see below
 -volumes:
 -  model-cache:
 ```
 
-- **Port:** `IMMICH_PORT` sets the published port for each instance. It can
-  include a bind address, for example `127.0.0.1:2284`.
-- **Image digests:** these are removed from the deployment template.
-  `docker load` doesn't restore repo digests with the classic image store, so
-  compose would otherwise try to pull the images. The digests were verified
-  when the images were pulled during the build. They are recorded in
-  `images.txt` and `manifest.json`, and `SHA256SUMS` protects the bundle.
+`INSTANCE_NAME`, `MODEL_LOCATION` and `IMMICH_PORT` are set in each
+instance's `.env`, and `deploy.sh --name/--port` fills them in. The build
+instance uses the same patched file, so every build also tests the patch.
 
-If upstream changes its compose layout and a patch no longer applies, the
-scripts stop with an error instead of producing a broken file.
+The patch uses one line of context, so it still applies when upstream changes
+image digests or moves lines around. If it no longer applies, `build.sh` stops.
+To update it:
+
+```sh
+curl -fsSLo a.yml https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml
+cp a.yml b.yml && $EDITOR b.yml
+diff -U1 --label a/docker-compose.yml --label b/docker-compose.yml a.yml b.yml > patches/docker-compose.patch
+```
+
+**Offline adjustment, not part of the patch:** the bundle's compose file also
+has the `@sha256:` digests removed from the valkey and postgres images, because
+the digests change with every release. `docker load` doesn't restore repo
+digests with the classic image store, so compose would otherwise try to pull
+the images. The digests are verified when the images are pulled during the
+build and are recorded in `images.txt` and `manifest.json`.
 
 ## Upload
 

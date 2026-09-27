@@ -7,7 +7,8 @@
 #   3. create the admin user, upload a sample picture, run a smart search and
 #      wait until every job queue is idle -> all ML models are downloaded
 #   4. export all docker images (docker save) and the model cache (tar.gz)
-#   5. write a self-contained bundle incl. patched multi-instance compose file
+#   5. write a self-contained bundle incl. the compose file patched with
+#      patches/docker-compose.patch (multi-instance)
 #      and deploy.sh, tar it up, optionally upload it
 #
 # Usage: ./build.sh [options]   (see --help)
@@ -68,7 +69,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-need docker curl jq tar gzip sha256sum awk sed
+need docker curl jq tar gzip sha256sum awk sed patch
 need_compose
 [[ -f $SAMPLE ]] || die "sample picture not found: $SAMPLE"
 
@@ -113,13 +114,16 @@ for f in hwaccel.ml.yml hwaccel.transcoding.yml; do   # optional, handy offline
 done
 
 # ------------------------------------------------------ build instance ------
-# The build instance keeps the upstream named volume for the model cache;
-# the cache is exported straight from it with `docker cp`.
-patch_compose "$BUNDLE/docker-compose.upstream.yml" "$INST/docker-compose.yml" "$BUILD_NAME" volume 0
-cp "$BUNDLE/example.upstream.env" "$INST/.env"
+# The build instance runs the same patched compose file that goes into the
+# bundle (patches/), with the image digests still in place.
+apply_patches "$BUNDLE/docker-compose.upstream.yml" "$BUNDLE/example.upstream.env" \
+  "$ROOT/patches" "$INST"
+mv "$INST/example.env" "$INST/.env"
 set_env "$INST/.env" IMMICH_VERSION "$TAG"
+set_env "$INST/.env" INSTANCE_NAME "$BUILD_NAME"
 set_env "$INST/.env" UPLOAD_LOCATION ./library
 set_env "$INST/.env" DB_DATA_LOCATION ./postgres
+set_env "$INST/.env" MODEL_LOCATION ./model-cache
 set_env "$INST/.env" DB_PASSWORD "$(random_alnum 32)"
 set_env "$INST/.env" IMMICH_PORT "$BUILD_PORT"
 
@@ -132,10 +136,11 @@ cleanup() {
   else
     log "removing build instance"
     dc down -v --remove-orphans >/dev/null 2>&1 || true
-    # library/ and postgres/ are owned by container users -> delete from inside
-    if [[ -d $INST/postgres || -d $INST/library ]]; then
+    # data folders are owned by container users -> delete from inside
+    if [[ -d $INST/postgres || -d $INST/library || -d $INST/model-cache ]]; then
       docker run --rm -v "$INST:/w" --entrypoint /bin/sh \
-        "ghcr.io/immich-app/immich-server:$TAG" -c 'rm -rf /w/postgres /w/library' >/dev/null 2>&1 || true
+        "ghcr.io/immich-app/immich-server:$TAG" \
+        -c 'rm -rf /w/postgres /w/library /w/model-cache' >/dev/null 2>&1 || true
     fi
   fi
   exit $rc
@@ -248,18 +253,13 @@ docker save "${TAGGED[@]}" | gzip >"$BUNDLE/images.tar.gz"
 
 # ------------------------------------------------------ bundle files --------
 log "writing bundle files"
-# deployment template: project name is replaced by deploy.sh per instance
-patch_compose "$BUNDLE/docker-compose.upstream.yml" "$BUNDLE/docker-compose.yml" immich bind 1
-cp "$BUNDLE/example.upstream.env" "$BUNDLE/example.env"
+# deployment template: patches/ + digests removed for `docker load`;
+# INSTANCE_NAME, port etc. are set per instance in .env by deploy.sh
+apply_patches "$BUNDLE/docker-compose.upstream.yml" "$BUNDLE/example.upstream.env" \
+  "$ROOT/patches" "$BUNDLE"
+strip_digests "$BUNDLE/docker-compose.yml"
 set_env "$BUNDLE/example.env" IMMICH_VERSION "$TAG"
-cat >>"$BUNDLE/example.env" <<'EOF'
-
-# --- immichOFF additions ------------------------------------------------------
-# Host folder for the machine learning models (filled from models.tar.gz)
-MODEL_LOCATION=./model-cache
-# Published port, may include a bind address, e.g. 127.0.0.1:2284
-IMMICH_PORT=2283
-EOF
+mkdir -p "$BUNDLE/patches" && cp "$ROOT"/patches/* "$BUNDLE/patches/"
 cp "$ROOT/deploy.sh" "$BUNDLE/deploy.sh"
 mkdir -p "$BUNDLE/lib" && cp "$ROOT/lib/common.sh" "$BUNDLE/lib/common.sh"
 
