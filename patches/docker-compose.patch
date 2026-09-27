@@ -12,7 +12,7 @@
 @@ -25,3 +24,3 @@
      ports:
 -      - '2283:2283'
-+      - '${IMMICH_PORT:-2283}:2283'
++      - '${HOST_PORT:-2283}:2283'
      depends_on:
 @@ -34,3 +33,2 @@
    immich-machine-learning:

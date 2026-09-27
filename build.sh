@@ -33,6 +33,7 @@ IDLE_CHECKS=${IDLE_CHECKS:-6}       # consecutive idle polls (5s apart) required
 KEEP=${KEEP:-0}
 FORCE=${FORCE:-0}
 UPLOAD=${UPLOAD:-0}
+RESOLVE_ONLY=0
 GH_REPO=immich-app/immich
 
 usage() {
@@ -48,6 +49,7 @@ Usage: $0 [options]
   --keep           keep the build instance running afterwards
   --force          rebuild even if dist/ already has a bundle for that version
   --upload         run upload.sh on the result (needs UPLOAD_TARGET)
+  --resolve        only print the latest immich release tag and exit
   -h, --help       this help
 
 Any option can also be set in config.env (see config.env.example).
@@ -64,25 +66,36 @@ while [[ $# -gt 0 ]]; do
     --keep)    KEEP=1; shift ;;
     --force)   FORCE=1; shift ;;
     --upload)  UPLOAD=1; shift ;;
+    --resolve) RESOLVE_ONLY=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "unknown option: $1" ;;
   esac
 done
 
-need docker curl jq tar gzip sha256sum awk sed patch
-need_compose
-[[ -f $SAMPLE ]] || die "sample picture not found: $SAMPLE"
-
 # ------------------------------------------------------- resolve version ----
 resolve_latest() {
   local tag
-  tag=$(curl -fsSL "https://api.github.com/repos/$GH_REPO/releases/latest" 2>/dev/null | jq -r '.tag_name // empty') || true
+  local auth=()   # a token avoids the anonymous API rate limit (CI runners)
+  [[ -n ${GITHUB_TOKEN:-} ]] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  tag=$(curl -fsSL "${auth[@]}" "https://api.github.com/repos/$GH_REPO/releases/latest" 2>/dev/null |
+    jq -r '.tag_name // empty') || true
   if [[ -z $tag ]]; then # API rate limit etc. -> follow the web redirect
-    tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$GH_REPO/releases/latest" | sed -n 's#.*/tag/##p')
+    tag=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$GH_REPO/releases/latest" |
+      sed -n 's#.*/tag/##p') || true
   fi
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || die "could not determine latest immich release (got '$tag')"
   echo "$tag"
 }
+
+if [[ $RESOLVE_ONLY == 1 ]]; then   # used by CI to decide whether to build
+  need curl jq sed
+  resolve_latest
+  exit 0
+fi
+
+need docker curl jq tar gzip sha256sum awk sed patch
+need_compose
+[[ -f $SAMPLE ]] || die "sample picture not found: $SAMPLE"
 
 if [[ $VERSION == latest ]]; then
   TAG=$(resolve_latest)
@@ -125,7 +138,7 @@ set_env "$INST/.env" UPLOAD_LOCATION ./library
 set_env "$INST/.env" DB_DATA_LOCATION ./postgres
 set_env "$INST/.env" MODEL_LOCATION ./model-cache
 set_env "$INST/.env" DB_PASSWORD "$(random_alnum 32)"
-set_env "$INST/.env" IMMICH_PORT "$BUILD_PORT"
+set_env "$INST/.env" HOST_PORT "$BUILD_PORT"
 
 dc() { docker compose --project-directory "$INST" -f "$INST/docker-compose.yml" "$@"; }
 
@@ -149,7 +162,13 @@ trap cleanup EXIT
 
 dc config -q || die "generated compose file is invalid"
 log "pulling images"
-dc pull
+# registries (ghcr.io) answer bursts with "toomanyrequests" - retry with backoff
+for attempt in 1 2 3 4 5; do
+  dc pull && break
+  (( attempt < 5 )) || die "pulling images failed"
+  warn "pull failed (attempt $attempt/5), retrying in $((attempt * 30))s"
+  sleep $((attempt * 30))
+done
 log "starting build instance '$BUILD_NAME' on $BUILD_PORT"
 dc up -d
 
@@ -160,6 +179,9 @@ log "waiting for the server ($API)"
 deadline=$((SECONDS + 600))
 until curl -fsS "$API/server/ping" 2>/dev/null | grep -q pong; do
   (( SECONDS < deadline )) || { dc logs --tail 50 immich-server >&2; die "server did not come up"; }
+  # a crash loop (e.g. invalid env) will not heal - fail fast
+  restarts=$(docker inspect -f '{{.RestartCount}}' "$(dc ps -aq immich-server)" 2>/dev/null || echo 0)
+  (( restarts < 3 )) || { dc logs --tail 50 immich-server >&2; die "server keeps restarting"; }
   sleep 5
 done
 

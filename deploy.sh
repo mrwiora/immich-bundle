@@ -80,14 +80,14 @@ if [[ $UPGRADE == 1 ]]; then
   set_env "$DIR/.env" IMMICH_VERSION "$TAG"
   set_env "$DIR/.env" INSTANCE_NAME "$NAME"
   [[ -n $(get_env "$DIR/.env" MODEL_LOCATION) ]] || set_env "$DIR/.env" MODEL_LOCATION ./model-cache
-  [[ -n $(get_env "$DIR/.env" IMMICH_PORT) ]]    || set_env "$DIR/.env" IMMICH_PORT "${PORT:-2283}"
-  [[ -z $PORT ]] || set_env "$DIR/.env" IMMICH_PORT "$PORT"
+  [[ -n $(get_env "$DIR/.env" HOST_PORT) ]]    || set_env "$DIR/.env" HOST_PORT "${PORT:-2283}"
+  [[ -z $PORT ]] || set_env "$DIR/.env" HOST_PORT "$PORT"
 else
   log "creating instance '$NAME' in $DIR"
   cp "$HERE/example.env" "$DIR/.env"
   set_env "$DIR/.env" INSTANCE_NAME "$NAME"
   set_env "$DIR/.env" DB_PASSWORD "$(random_alnum 32)"
-  set_env "$DIR/.env" IMMICH_PORT "${PORT:-2283}"
+  set_env "$DIR/.env" HOST_PORT "${PORT:-2283}"
   chmod 600 "$DIR/.env"
 fi
 
@@ -105,5 +105,5 @@ if [[ $START == 1 ]]; then
   ( cd "$DIR" && docker compose up -d --pull never )
 fi
 
-log "done. instance '$NAME' ($TAG) in $DIR, port $(get_env "$DIR/.env" IMMICH_PORT)"
+log "done. instance '$NAME' ($TAG) in $DIR, port $(get_env "$DIR/.env" HOST_PORT)"
 [[ $START == 1 ]] || echo "   start with: cd $DIR && docker compose up -d --pull never"

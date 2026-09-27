@@ -1,0 +1,170 @@
+name: Build bundle
+
+# Builds an offline bundle for every new immich release.
+#
+# Each built version is recorded as a GitHub release of this repository with the
+# same tag (e.g. v3.0.1); a scheduled run skips versions that already have one.
+#
+# Configuration (Settings -> Secrets and variables -> Actions):
+#   variables
+#     BUILD_RUNNER      runner label, default "ubuntu-latest"; e.g. "self-hosted"
+#     RELEASE_BUNDLE    "false" = don't attach the bundle to the release
+#                       (only manifest, compose file and checksums)
+#   secrets (all optional - without UPLOAD_TARGET nothing is uploaded)
+#     UPLOAD_TARGET     user@host:/path/ | https://host/path/ | /mounted/path
+#     UPLOAD_SSH_KEY    private key for rsync/scp targets
+#     UPLOAD_KNOWN_HOSTS  output of `ssh-keyscan host` for rsync/scp targets
+#     UPLOAD_CURL_OPTS  extra curl options for https targets, e.g. --user u:p
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # daily; does nothing unless there is a new release
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'immich release tag (empty = latest)'
+        required: false
+        default: ''
+      force:
+        description: 'rebuild even if a release for this version exists'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # create releases
+
+concurrency:
+  group: build-bundle
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      build: ${{ steps.resolve.outputs.build }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_FORCE: ${{ inputs.force }}
+        run: |
+          tag=${INPUT_VERSION:-$(./build.sh --resolve)}
+          [[ $tag == v* ]] || tag=v$tag
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          if [[ $INPUT_FORCE != true ]] && gh release view "$tag" >/dev/null 2>&1; then
+            echo "::notice::$tag already built - skipping"
+            echo "build=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "build=true" >>"$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ${{ vars.BUILD_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 240
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ github.token }}
+      HAS_UPLOAD: ${{ secrets.UPLOAD_TARGET != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up directories
+        # outside the checkout: survives `git clean` and is easy to wipe
+        run: |
+          echo "WORK_DIR=$RUNNER_TEMP/immich-bundle/work" >>"$GITHUB_ENV"
+          echo "DIST_DIR=$RUNNER_TEMP/immich-bundle/dist" >>"$GITHUB_ENV"
+
+      - name: Free disk space (GitHub-hosted runner)
+        if: runner.environment == 'github-hosted'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          docker system prune -af >/dev/null
+          df -h /
+
+      - name: Check tools
+        run: |
+          for c in docker curl jq tar gzip sha256sum patch split gh; do
+            command -v "$c" >/dev/null || { echo "::error::missing tool: $c"; exit 1; }
+          done
+          docker compose version
+          docker info --format 'docker {{.ServerVersion}}, storage {{.Driver}}, {{.NCPU}} CPUs'
+
+      - name: Build bundle
+        run: ./build.sh --version "$TAG" --force
+
+      - name: Upload to central server
+        if: env.HAS_UPLOAD == 'true'
+        env:
+          UPLOAD_TARGET: ${{ secrets.UPLOAD_TARGET }}
+          UPLOAD_CURL_OPTS: ${{ secrets.UPLOAD_CURL_OPTS }}
+          UPLOAD_SSH_KEY: ${{ secrets.UPLOAD_SSH_KEY }}
+          UPLOAD_KNOWN_HOSTS: ${{ secrets.UPLOAD_KNOWN_HOSTS }}
+        run: |
+          if [[ -n $UPLOAD_SSH_KEY ]]; then
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            printf '%s\n' "$UPLOAD_SSH_KEY" >~/.ssh/immich_bundle_upload
+            chmod 600 ~/.ssh/immich_bundle_upload
+            printf '%s\n' "$UPLOAD_KNOWN_HOSTS" >>~/.ssh/known_hosts
+            export RSYNC_RSH="ssh -i $HOME/.ssh/immich_bundle_upload -o IdentitiesOnly=yes"
+            export SCP_OPTS="-i $HOME/.ssh/immich_bundle_upload -o IdentitiesOnly=yes"
+          fi
+          ./upload.sh "$DIST_DIR/immich-bundle-$TAG.tar" "$DIST_DIR/immich-bundle-$TAG.tar.sha256"
+          rm -f ~/.ssh/immich_bundle_upload
+
+      - name: Create release
+        env:
+          RELEASE_BUNDLE: ${{ vars.RELEASE_BUNDLE }}
+        run: |
+          name=immich-bundle-$TAG
+          rel=$RUNNER_TEMP/release && rm -rf "$rel" && mkdir -p "$rel"
+          # small files straight from the bundle
+          tar -xf "$DIST_DIR/$name.tar" -C "$rel" \
+            "$name/manifest.json" "$name/docker-compose.yml" "$name/example.env" "$name/SHA256SUMS"
+          files=("$rel/$name"/* "$DIST_DIR/$name.tar.sha256")
+          if [[ $RELEASE_BUNDLE != false ]]; then
+            # release assets are limited to 2 GiB each -> split
+            split -b 1900M -d -a 2 "$DIST_DIR/$name.tar" "$rel/$name.tar.part-"
+            files+=("$rel/$name.tar.part-"*)
+          fi
+          {
+            echo "Offline bundle for [immich $TAG](https://github.com/immich-app/immich/releases/tag/$TAG)."
+            echo
+            echo '```'
+            jq -r '.images[] | "\(.ref)  \(.id[7:19])"' "$rel/$name/manifest.json"
+            echo '```'
+            if [[ $RELEASE_BUNDLE != false ]]; then
+              echo
+              echo "Download all \`.part-*\` files, then:"
+              echo '```sh'
+              echo "cat $name.tar.part-* > $name.tar && sha256sum -c $name.tar.sha256"
+              echo '```'
+            fi
+          } >"$rel/notes.md"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" --title "immich-bundle $TAG" \
+            --notes-file "$rel/notes.md" --target "$GITHUB_SHA" "${files[@]}"
+
+      - name: Clean up
+        if: always()
+        run: |
+          base=$RUNNER_TEMP/immich-bundle
+          # Remove the images of this build so a self-hosted runner does not fill
+          # up. Images used by a container (e.g. a running instance on the same
+          # host) are kept - `docker image rm` without -f refuses those.
+          tar="$DIST_DIR/immich-bundle-$TAG.tar"
+          if [[ -f $tar ]]; then
+            tar -xOf "$tar" "immich-bundle-$TAG/manifest.json" | jq -r '.images[].ref' |
+              xargs -r docker image rm >/dev/null 2>&1 || true
+          fi
+          # leftovers owned by container users can only be removed from a container
+          rm -rf "$base" "$RUNNER_TEMP/release" 2>/dev/null ||
+            docker run --rm -v "$base:/w" alpine:3 sh -c 'rm -rf /w/*' || true
