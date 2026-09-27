@@ -28,10 +28,10 @@ apply_patches "$TMP/docker-compose.upstream.yml" "$TMP/example.upstream.env" "$R
 strip_digests "$TMP/out/docker-compose.yml"
 mv "$TMP/out/example.env" "$TMP/out/.env"
 set_env "$TMP/out/.env" INSTANCE_NAME patchcheck
-set_env "$TMP/out/.env" IMMICH_PORT 2299
+set_env "$TMP/out/.env" HOST_PORT 2299
 
 name=$(cd "$TMP/out" && docker compose config --format json) || die "patched compose file is invalid"
 jq -e '.name == "patchcheck"' <<<"$name" >/dev/null || die "INSTANCE_NAME is not used as project name"
 jq -e '[.services[].container_name] | all(. == null)' <<<"$name" >/dev/null || die "container_name still set"
-jq -e '.services["immich-server"].ports[0].published == "2299"' <<<"$name" >/dev/null || die "IMMICH_PORT not used"
+jq -e '.services["immich-server"].ports[0].published == "2299"' <<<"$name" >/dev/null || die "HOST_PORT not used"
 log "ok: patches apply to $TAG"

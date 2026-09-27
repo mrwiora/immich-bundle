@@ -46,7 +46,7 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       build: ${{ steps.resolve.outputs.build }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: resolve
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -75,7 +75,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       HAS_UPLOAD: ${{ secrets.UPLOAD_TARGET != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up directories
         # outside the checkout: survives `git clean` and is easy to wipe

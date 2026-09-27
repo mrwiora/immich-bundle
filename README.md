@@ -111,14 +111,14 @@ so the same compose file works for every instance:
 +name: ${INSTANCE_NAME:-immich}
 -    container_name: immich_server        # (all four container_name lines)
 -      - '2283:2283'
-+      - '${IMMICH_PORT:-2283}:2283'
++      - '${HOST_PORT:-2283}:2283'
 -      - model-cache:/cache
 +      - ${MODEL_LOCATION}:/cache
 -volumes:
 -  model-cache:
 ```
 
-`INSTANCE_NAME`, `MODEL_LOCATION` and `IMMICH_PORT` are set in each
+`INSTANCE_NAME`, `MODEL_LOCATION` and `HOST_PORT` are set in each
 instance's `.env`, and `deploy.sh --name/--port` fills them in. The build
 instance uses the same patched file, so every build also tests the patch.
 

@@ -13,7 +13,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: shellcheck
         run: shellcheck -x build.sh deploy.sh upload.sh lib/common.sh ci/*.sh
       - name: patches apply to the latest immich release

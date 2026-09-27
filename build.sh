@@ -138,7 +138,7 @@ set_env "$INST/.env" UPLOAD_LOCATION ./library
 set_env "$INST/.env" DB_DATA_LOCATION ./postgres
 set_env "$INST/.env" MODEL_LOCATION ./model-cache
 set_env "$INST/.env" DB_PASSWORD "$(random_alnum 32)"
-set_env "$INST/.env" IMMICH_PORT "$BUILD_PORT"
+set_env "$INST/.env" HOST_PORT "$BUILD_PORT"
 
 dc() { docker compose --project-directory "$INST" -f "$INST/docker-compose.yml" "$@"; }
 
@@ -173,6 +173,9 @@ log "waiting for the server ($API)"
 deadline=$((SECONDS + 600))
 until curl -fsS "$API/server/ping" 2>/dev/null | grep -q pong; do
   (( SECONDS < deadline )) || { dc logs --tail 50 immich-server >&2; die "server did not come up"; }
+  # a crash loop (e.g. invalid env) will not heal - fail fast
+  restarts=$(docker inspect -f '{{.RestartCount}}' "$(dc ps -aq immich-server)" 2>/dev/null || echo 0)
+  (( restarts < 3 )) || { dc logs --tail 50 immich-server >&2; die "server keeps restarting"; }
   sleep 5
 done
 
