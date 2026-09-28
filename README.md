@@ -10,7 +10,12 @@ Offline bundles for [immich](https://immich.app), plus multi-instance deployment
 2. Starts a throw-away instance. It gets its own project name
    (`immich-bundle-build`) and listens on `127.0.0.1:12283`, so it doesn't collide
    with the instances already running on the server.
-3. Uses the API to create the first admin user and upload a sample picture.
+3. Uses the API to create the first admin user and set the OCR model
+   (`OCR_MODEL`, default `ESLAV__PP-OCRv5_mobile`, meaning Russian,
+   Belarusian, Ukrainian and English; empty = immich default). Then it uploads a
+   sample picture. Only the models the build instance uses end up in the
+   bundle, so your instances need the same OCR model set under
+   Administration → Settings → Machine Learning → OCR.
    It then runs one smart search, because the text half of the CLIP model only
    loads during a search.
 4. Polls the job queues until they are idle, meaning thumbnails, CLIP, face
