@@ -15,7 +15,12 @@ Offline bundles for [immich](https://immich.app), plus multi-instance deployment
    loads during a search.
 4. Polls the job queues until they are idle, meaning thumbnails, CLIP, face
    detection and recognition, and OCR have all finished and the ML models are
-   downloaded.
+   downloaded. Then, for every further OCR model in `OCR_MODELS`, it switches
+   the OCR model and re-runs OCR on all assets, so that model is downloaded
+   too. By default both `PP-OCRv5_mobile` (immich's default) and
+   `ESLAV__PP-OCRv5_mobile` (Russian, Belarusian, Ukrainian and English) are
+   bundled, so either can be selected offline under Administration → Settings
+   → Machine Learning → OCR.
 5. Exports the model cache from the ML container with
    `docker cp <ml-container>:/cache`. The build instance runs the same patched
    compose file as your instances, so the cache is in `MODEL_LOCATION`.
