@@ -30,9 +30,10 @@ WORK_DIR=${WORK_DIR:-$ROOT/work}
 DIST_DIR=${DIST_DIR:-$ROOT/dist}
 TIMEOUT=${TIMEOUT:-3600}            # seconds to wait for all jobs to finish
 IDLE_CHECKS=${IDLE_CHECKS:-6}       # consecutive idle polls (5s apart) required
-# OCR model the build instance uses (= the one that ends up in models.tar.gz);
-# empty = immich default. ESLAV = Russian, Belarusian, Ukrainian and English.
-OCR_MODEL=${OCR_MODEL-ESLAV__PP-OCRv5_mobile}
+# OCR models to put into models.tar.gz (space separated); the OCR job is run
+# once per model. Empty = only immich's default model.
+# PP-OCRv5_mobile = immich default, ESLAV = Russian, Belarusian, Ukrainian, English
+OCR_MODELS=${OCR_MODELS-PP-OCRv5_mobile ESLAV__PP-OCRv5_mobile}
 KEEP=${KEEP:-0}
 FORCE=${FORCE:-0}
 UPLOAD=${UPLOAD:-0}
@@ -49,8 +50,8 @@ Usage: $0 [options]
   --port ADDR      host port of the build instance (default: $BUILD_PORT)
   --name NAME      compose project name of the build instance (default: $BUILD_NAME)
   --timeout SEC    max. time to wait for the job queues (default: $TIMEOUT)
-  --ocr-model NAME OCR model to bundle (default: ${OCR_MODEL:-immich default}),
-                   e.g. PP-OCRv5_mobile, ESLAV__PP-OCRv5_mobile; '' = immich default
+  --ocr-models 'A B'  OCR models to bundle (default: '${OCR_MODELS}');
+                   '' = only immich's default
   --keep           keep the build instance running afterwards
   --force          rebuild even if dist/ already has a bundle for that version
   --upload         run upload.sh on the result (needs UPLOAD_TARGET)
@@ -68,7 +69,7 @@ while [[ $# -gt 0 ]]; do
     --port)    BUILD_PORT=$2; shift 2 ;;
     --name)    BUILD_NAME=$2; shift 2 ;;
     --timeout) TIMEOUT=$2; shift 2 ;;
-    --ocr-model) OCR_MODEL=$2; shift 2 ;;
+    --ocr-models) OCR_MODELS=$2; shift 2 ;;
     --keep)    KEEP=1; shift ;;
     --force)   FORCE=1; shift ;;
     --upload)  UPLOAD=1; shift ;;
@@ -204,19 +205,25 @@ TOKEN=$(curl -fsS -H 'Content-Type: application/json' \
 [[ -n $TOKEN && $TOKEN != null ]] || die "login failed"
 AUTH=(-H "Authorization: Bearer $TOKEN")
 
-# ------------------------------------------------------ ocr model -----------
-# Set before the upload, so the OCR job downloads this model instead of the default.
-if [[ -n $OCR_MODEL ]]; then
-  log "setting OCR model to $OCR_MODEL"
-  config=$(curl -fsS "${AUTH[@]}" "$API/system-config") || die "reading system config failed"
-  if jq -e '.machineLearning.ocr' <<<"$config" >/dev/null; then
-    jq --arg m "$OCR_MODEL" '.machineLearning.ocr.modelName = $m' <<<"$config" |
-      curl -fsS -X PUT "${AUTH[@]}" -H 'Content-Type: application/json' -d @- \
-        "$API/system-config" >/dev/null || die "setting OCR model '$OCR_MODEL' failed"
-  else
-    warn "this immich release has no OCR settings - ignoring OCR_MODEL"
-  fi
+# ------------------------------------------------------ ocr models ----------
+# The ML container only downloads the OCR model that is configured, so the
+# first model is set before the upload and the others get their own OCR run
+# further down (after the queues are idle).
+read -ra OCR_LIST <<<"$OCR_MODELS"
+if (( ${#OCR_LIST[@]} )) &&
+   ! curl -fsS "${AUTH[@]}" "$API/system-config" | jq -e '.machineLearning.ocr' >/dev/null; then
+  warn "this immich release has no OCR settings - ignoring OCR_MODELS"
+  OCR_LIST=()
 fi
+
+set_ocr_model() {
+  log "setting OCR model to $1"
+  curl -fsS "${AUTH[@]}" "$API/system-config" |
+    jq --arg m "$1" '.machineLearning.ocr.modelName = $m' |
+    curl -fsS -X PUT "${AUTH[@]}" -H 'Content-Type: application/json' -d @- \
+      "$API/system-config" >/dev/null || die "setting OCR model '$1' failed"
+}
+(( ${#OCR_LIST[@]} )) && set_ocr_model "${OCR_LIST[0]}"
 
 log "uploading $(basename "$SAMPLE")"
 now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
@@ -262,6 +269,16 @@ curl -fsS "${AUTH[@]}" -H 'Content-Type: application/json' \
   warn "smart search failed - CLIP text model may be missing"
 wait_idle
 
+# further OCR models: switch the model and re-run OCR on all assets
+for m in "${OCR_LIST[@]:1}"; do
+  set_ocr_model "$m"
+  log "re-running OCR with $m"
+  curl -fsS -X PUT "${AUTH[@]}" -H 'Content-Type: application/json' \
+    -d '{"command":"start","force":true}' "$API/jobs/ocr" >/dev/null ||
+    die "starting the OCR job failed"
+  wait_idle
+done
+
 SERVER_VERSION=$(curl -fsS "${AUTH[@]}" "$API/server/version" | jq -r '"v\(.major).\(.minor).\(.patch)"')
 [[ $SERVER_VERSION == "$TAG" ]] || warn "server reports $SERVER_VERSION, expected $TAG"
 
@@ -273,7 +290,7 @@ rm -rf "$WORK_DIR/$TAG/cache"
 docker cp "$ML:/cache" - | tar -x -C "$WORK_DIR/$TAG"
 echo "   model cache content:" >&2
 ( cd "$WORK_DIR/$TAG/cache" && find . -mindepth 2 -maxdepth 2 -type d | sed 's#^\./#     #' ) >&2
-for d in clip facial-recognition ${OCR_MODEL:+ocr/$OCR_MODEL}; do
+for d in clip facial-recognition "${OCR_LIST[@]/#/ocr/}"; do
   [[ -d $WORK_DIR/$TAG/cache/$d ]] || warn "no '$d' models in cache - was the job skipped?"
 done
 tar -czf "$BUNDLE/models.tar.gz" -C "$WORK_DIR/$TAG/cache" .
