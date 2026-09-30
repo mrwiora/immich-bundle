@@ -20,3 +20,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ci/check-patch.sh
+      - name: scripts run without GitHub (on premise)
+        run: |
+          # no gh CLI in the scripts used on premise
+          if grep -nE '(^|[^[:alnum:]_.-])gh[[:space:]]' build.sh deploy.sh upload.sh lib/common.sh; then
+            echo "::error::the build/deploy scripts must not depend on the gh CLI"; exit 1
+          fi
+          # no Actions variables or tokens: plain environment only
+          env -i PATH="$PATH" HOME="$HOME" ./build.sh --help >/dev/null
+          env -i PATH="$PATH" HOME="$HOME" ./build.sh --resolve

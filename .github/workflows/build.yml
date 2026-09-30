@@ -9,7 +9,9 @@ name: Build bundle
 #   variables
 #     BUILD_RUNNER      runner label, default "ubuntu-latest"; e.g. "self-hosted"
 #     RELEASE_BUNDLE    "false" = don't attach the bundle to the release
-#                       (only manifest, compose file and checksums)
+#                       (only manifest, compose file and checksums).
+#                       In a public repository the bundle is never attached:
+#                       it contains models that may not be redistributed.
 #   secrets (all optional - without UPLOAD_TARGET nothing is uploaded)
 #     UPLOAD_TARGET     user@host:/path/ | https://host/path/ | /mounted/path
 #     UPLOAD_SSH_KEY    private key for rsync/scp targets
@@ -130,6 +132,13 @@ jobs:
           tar -xf "$DIST_DIR/$name.tar" -C "$rel" \
             "$name/manifest.json" "$name/docker-compose.yml" "$name/example.env" "$name/SHA256SUMS"
           files=("$rel/$name"/* "$DIST_DIR/$name.tar.sha256")
+          # The bundle contains ML models that may not be redistributed
+          # (e.g. InsightFace buffalo_l: non-commercial research only), so it is
+          # only attached to releases of private repositories.
+          if [[ $(gh api "repos/$GITHUB_REPOSITORY" --jq .private) != true ]]; then
+            echo "::warning::public repository - the bundle is not attached to the release"
+            RELEASE_BUNDLE=false
+          fi
           if [[ $RELEASE_BUNDLE != false ]]; then
             # release assets are limited to 2 GiB each -> split
             split -b 1900M -d -a 2 "$DIST_DIR/$name.tar" "$rel/$name.tar.part-"
