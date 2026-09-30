@@ -31,15 +31,18 @@ Offline bundles for [immich](https://immich.app), plus multi-instance deployment
 >    download immich's public release files, container images and models.
 >    Use cron to follow new releases automatically (see [Build](#build)).
 > 2. **In a *private* GitHub repository** with the included workflow
->    ([Automated builds](#automated-builds-github-actions)). Forks of a public
->    repository are always public, so create a private copy instead of a fork:
+>    ([Automated builds](#automated-builds-github-actions)). The simplest way
+>    is to **fork** this repository: a fork of a private repository stays
+>    private. Then enable Actions in your fork.
+>    If you got the code from a *public* copy, don't fork it, because forks of
+>    public repositories are always public. Create a private copy instead:
 >    ```sh
 >    # first create an empty *private* repository, e.g. YOU/immich-bundle
 >    git clone --bare https://github.com/mrwiora/immich-bundle
 >    git -C immich-bundle.git push --mirror https://github.com/YOU/immich-bundle
 >    ```
->    Then enable Actions in that repository. As a safeguard, the workflow only
->    attaches the bundle to a release if the repository is private.
+>    As a safeguard, the workflow only attaches the bundle to a release if the
+>    repository is private.
 >
 > Keep the bundles to yourself or your own organisation, and don't upload them
 > anywhere public. This note is not legal advice. If you want to pass bundles
