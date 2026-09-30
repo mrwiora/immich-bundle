@@ -2,6 +2,49 @@
 
 Offline bundles for [immich](https://immich.app), plus multi-instance deployment.
 
+> [!IMPORTANT]
+> **No pre-built bundles are published here. Build your own. It takes one command.**
+>
+> **Why:** a bundle contains the machine-learning models that immich normally
+> downloads by itself on first use. Not all of them may be passed on freely.
+> The face recognition model (`buffalo_l` by
+> [InsightFace](https://github.com/deepinsight/insightface#license)) is
+> licensed for *non-commercial research purposes only*, so sharing it inside a
+> download bundle is not allowed without InsightFace's permission. The other
+> parts (immich and VectorChord under AGPL-3.0, CLIP under MIT, the PaddleOCR
+> models under Apache-2.0) would also require licence texts and source
+> references to be distributed alongside. For that reason, this repository
+> only ships the **tooling**, not the result.
+>
+> **What you can do:** build the bundles yourself, for your own use. You
+> download the same files immich would download on your server anyway. You
+> just do it once, in advance. You have two options:
+>
+> 1. **On premise, without GitHub**, on any Linux machine with Docker (Debian
+>    recommended):
+>    ```sh
+>    git clone https://github.com/mrwiora/immich-bundle && cd immich-bundle
+>    ./build.sh            # -> dist/immich-bundle-vX.Y.Z.tar
+>    ```
+>    `build.sh`, `deploy.sh` and `upload.sh` are plain shell scripts. They
+>    need neither GitHub Actions nor the `gh` CLI nor a GitHub account. They only
+>    download immich's public release files, container images and models.
+>    Use cron to follow new releases automatically (see [Build](#build)).
+> 2. **In a *private* GitHub repository** with the included workflow
+>    ([Automated builds](#automated-builds-github-actions)). Forks of a public
+>    repository are always public, so create a private copy instead of a fork:
+>    ```sh
+>    # first create an empty *private* repository, e.g. YOU/immich-bundle
+>    git clone --bare https://github.com/mrwiora/immich-bundle
+>    git -C immich-bundle.git push --mirror https://github.com/YOU/immich-bundle
+>    ```
+>    Then enable Actions in that repository. As a safeguard, the workflow only
+>    attaches the bundle to a release if the repository is private.
+>
+> Keep the bundles to yourself or your own organisation, and don't upload them
+> anywhere public. This note is not legal advice. If you want to pass bundles
+> on, check the licences of everything they contain first.
+
 `build.sh` automates the manual steps for the latest release:
 
 1. Resolves the latest release tag, e.g. `v3.0.1`. It then downloads that
@@ -167,6 +210,8 @@ It builds a bundle only when a new immich release exists.
   release is skipped.
 - **Release files:** the release holds `manifest.json`, the patched
   `docker-compose.yml`, `example.env`, the checksums and the bundle itself.
+  The bundle is only attached if the repository is **private** (see the note
+  at the top). In a public repository it is left out automatically.
   Release assets are limited to 2 GiB each, so the bundle is split into
   `.part-NN` files. Put it back together with:
   `cat immich-bundle-vX.Y.Z.tar.part-* > immich-bundle-vX.Y.Z.tar`.
@@ -176,15 +221,16 @@ It builds a bundle only when a new immich release exists.
 
 [`.github/workflows/check.yml`](.github/workflows/check.yml) runs on every
 push and pull request. It runs shellcheck and checks that `patches/` still
-applies to the latest immich compose file (`ci/check-patch.sh`). This check
-needs no Docker daemon.
+applies to the latest immich compose file (`ci/check-patch.sh`). It also
+checks that the scripts run without GitHub: no `gh` calls, and `build.sh`
+works with the Actions environment cleared. This check needs no Docker daemon.
 
 Settings (*Settings → Secrets and variables → Actions*):
 
 | name | kind | purpose |
 |---|---|---|
 | `BUILD_RUNNER` | variable | runner label, default `ubuntu-latest`; `immich-bundle` for the self-hosted runner below |
-| `RELEASE_BUNDLE` | variable | `false`: don't attach the bundle parts to the release |
+| `RELEASE_BUNDLE` | variable | `false`: don't attach the bundle parts to the release (never attached in a public repository) |
 | `UPLOAD_TARGET` | secret | `user@host:/path/`, `https://…/` or a mounted path (see [Upload](#upload)) |
 | `UPLOAD_SSH_KEY` | secret | private key for rsync/scp targets |
 | `UPLOAD_KNOWN_HOSTS` | secret | `ssh-keyscan <host>` output for rsync/scp targets |
